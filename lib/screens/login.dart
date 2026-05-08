@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart'; // Đảm bảo đúng đường dẫn tới AuthService
+import 'home.dart';
+import 'main_screen.dart';
 import 'register.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -9,8 +12,45 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final AuthService _authService = AuthService();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  void _handleLogin() async {
+    String email = _emailController.text.trim();
+    String password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Vui lòng nhập đầy đủ Email và Mật khẩu")),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    final result = await _authService.loginUser(email, password);
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (result == "success") {
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainScreen()));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result ?? "Lỗi đăng nhập")),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +62,6 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Biểu tượng ứng dụng
               const Icon(
                 Icons.remove_red_eye_rounded,
                 size: 100,
@@ -30,48 +69,25 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 20),
               const Text(
-                "Chào mừng trở lại",
+                "Iris Diagnosis AI",
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
               const Text("Đăng nhập để tiếp tục phân tích mống mắt"),
               const SizedBox(height: 40),
 
-              // Ô nhập Email
-              TextField(
-                controller: _emailController,
-                decoration: InputDecoration(
-                  labelText: "Email",
-                  prefixIcon: const Icon(Icons.email_outlined),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
+              _buildTextField(_emailController, "Email", Icons.email_outlined),
               const SizedBox(height: 20),
 
-              // Ô nhập Mật khẩu
-              TextField(
-                controller: _passwordController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: "Mật khẩu",
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
+              _buildTextField(_passwordController, "Mật khẩu", Icons.lock_outline, isPass: true),
               const SizedBox(height: 30),
 
-              // Nút Đăng nhập
               SizedBox(
                 width: double.infinity,
                 height: 55,
-                child: ElevatedButton(
-                  onPressed: () {
-                    // Xử lý logic đăng nhập hoặc chuyển trang tại đây
-                    print("Đang đăng nhập với: ${_emailController.text}");
-                  },
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ElevatedButton(
+                  onPressed: _handleLogin,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blueAccent,
                     foregroundColor: Colors.white,
@@ -89,7 +105,6 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 20),
               TextButton(
                 onPressed: () {
-                  // Lệnh chuyển sang màn hình Đăng ký
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const RegisterScreen()),
@@ -102,6 +117,20 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextField(TextEditingController controller, String label, IconData icon, {bool isPass = false}) {
+    return TextField(
+      controller: controller,
+      obscureText: isPass,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
         ),
       ),
     );
