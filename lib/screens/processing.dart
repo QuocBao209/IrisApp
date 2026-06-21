@@ -29,25 +29,57 @@ class _ProcessingScreenState extends State<ProcessingScreen> with SingleTickerPr
   }
 
   void _performAnalysis() async {
-    final res = await _diagnosisService.analyzeIris(widget.imagePath);
+    try {
+      await Future.delayed(const Duration(milliseconds: 200));
 
-    await _historyService.saveResult(
-      imagePath: widget.imagePath,
-      status: res['status'],
-      message: res['message'],
-      score: res['score'],
-    );
+      final DateTime startTime = DateTime.now();
 
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ResultScreen(
-            imagePath: widget.imagePath,
-            result: res,
-          ),
-        ),
+      final res = await _diagnosisService.analyzeIris(widget.imagePath);
+
+      final rawConfidence = (res['confidence'] ?? 0).toDouble();
+      final int finalConfidence = (rawConfidence <= 1.0
+          ? (rawConfidence * 100)
+          : rawConfidence
+      ).clamp(0, 100).round();
+
+      await _historyService.saveResult(
+        imagePath: widget.imagePath,
+        prediction: res['prediction'] ?? 'unknown',
+        confidence: finalConfidence,
       );
+
+      final int elapsedExecutionTime = DateTime.now().difference(startTime).inMilliseconds;
+      const int minimumUiDisplayTime = 2500;
+
+      if (elapsedExecutionTime < minimumUiDisplayTime) {
+        final int dynamicRemainingDelay = minimumUiDisplayTime - elapsedExecutionTime;
+        await Future.delayed(Duration(milliseconds: dynamicRemainingDelay));
+      }
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ResultScreen(
+              imagePath: widget.imagePath,
+              result: res,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      print('UI Processing Error: $e');
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ResultScreen(
+              imagePath: widget.imagePath,
+              result: const {'prediction': 'unknown', 'confidence': 0},
+            ),
+          ),
+        );
+      }
     }
   }
 

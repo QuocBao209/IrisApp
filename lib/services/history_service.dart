@@ -7,32 +7,35 @@ class HistoryService {
 
   Future<void> saveResult({
     required String imagePath,
-    required String status,
-    required String message,
-    required int score,
+    required String prediction,
+    required int confidence,
   }) async {
     final String? uid = _auth.currentUser?.uid;
+
     if (uid == null) return;
 
     try {
       await _db.collection('diagnoses').add({
         'userId': uid,
         'imagePath': imagePath,
-        'status': status,
-        'message': message,
-        'score': score,
+        'prediction': prediction,
+        'confidence': confidence,
         'timestamp': FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      print("Lỗi lưu lịch sử: $e");
+      print('Lỗi lưu lịch sử: $e');
     }
   }
 
   Stream<QuerySnapshot> getHistoryStream({int? limit}) {
     final user = _auth.currentUser;
-    if (user == null) return const Stream.empty();
 
-    Query query = _db.collection('diagnoses')
+    if (user == null) {
+      return const Stream.empty();
+    }
+
+    Query query = _db
+        .collection('diagnoses')
         .where('userId', isEqualTo: user.uid)
         .orderBy('timestamp', descending: true);
 

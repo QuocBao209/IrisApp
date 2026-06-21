@@ -19,7 +19,7 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        jvmTarget = "17"
     }
 
     defaultConfig {
@@ -44,4 +44,10 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+//    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar"))))
+    implementation(files("libs/iic-2.33.11_1.aar"))
+    implementation("androidx.appcompat:appcompat:1.6.1")
 }
