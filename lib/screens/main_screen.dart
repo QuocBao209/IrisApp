@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_application_1/screens/news.dart';
 import 'package:flutter_application_1/screens/profile.dart';
 
@@ -16,6 +17,13 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
+  static const _iritechChannel = MethodChannel('com.iritech.irisaegis/device');
+
+  @override
+  void initState() {
+    super.initState();
+    _iritechChannel.invokeMethod('warmUpSdk').catchError((_) {});
+  }
 
   List<Widget> get _screens => [
     HomeScreen(
@@ -37,7 +45,8 @@ class _MainScreenState extends State<MainScreen> {
 
       floatingActionButton: _selectedIndex == 0
           ? FloatingActionButton(
-        onPressed: () async {
+        onPressed: () {
+          _iritechChannel.invokeMethod('connectDevice').catchError((_) {});
           Navigator.push(
             context,
             MaterialPageRoute(
