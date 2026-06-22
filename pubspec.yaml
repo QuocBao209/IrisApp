@@ -71,6 +71,7 @@ flutter:
 
   assets:
     - lib/assets/best_model_quantized.onnx
+    - lib/assets/python/iris_segment.py
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

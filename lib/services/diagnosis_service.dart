@@ -77,6 +77,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:image/image.dart' as img;
 import 'package:onnxruntime/onnxruntime.dart';
+import 'package:path_provider/path_provider.dart';
 
 class _IsolateParams {
   final Uint8List modelBytes;
@@ -86,6 +87,59 @@ class _IsolateParams {
 
 class DiagnosisService {
   Uint8List? _modelBytes;
+
+  Future<String> segmentIris(String fullEyeImagePath) async {
+    try {
+      print("[Segmentation] Đang trích xuất mống mắt...");
+
+      final Directory downloadDir = await getDownloadsDirectory() ??
+          await getApplicationDocumentsDirectory();
+
+      final String baseName = fullEyeImagePath.split(Platform.pathSeparator).last;
+      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final String segmentedName = "iris_${timestamp}_$baseName";
+      final String outputPath = '${downloadDir.path}/$segmentedName';
+
+      final String? resultPath = await _runPythonSegmentation(
+          fullEyeImagePath,
+          outputPath
+      );
+
+      if (resultPath != null && await File(resultPath).exists()) {
+        print("[Segmentation] Thành công: $resultPath");
+        return resultPath;
+      }
+    } catch (e) {
+      print("[Segmentation] Lỗi: $e");
+    }
+
+    print("⚠️ [Segmentation] Sử dụng ảnh gốc làm fallback");
+    return fullEyeImagePath;
+  }
+
+  Future<String?> _runPythonSegmentation(String inputPath, String outputPath) async {
+    try {
+      const String pythonScriptPath = 'lib/assets/python/iris_segment.py';
+
+      final process = await Process.run(
+        'python',
+        [pythonScriptPath, inputPath, outputPath],
+        runInShell: true,
+      );
+
+      if (process.exitCode == 0) {
+        final output = process.stdout.trim();
+        if (output.isNotEmpty) {
+          return output;
+        }
+      } else {
+        print("Python Segmentation Error: ${process.stderr}");
+      }
+    } catch (e) {
+      print("Không thể chạy Python segmentation script: $e");
+    }
+    return null;
+  }
 
   Future<void> _initModelBytes() async {
     if (_modelBytes != null) return;

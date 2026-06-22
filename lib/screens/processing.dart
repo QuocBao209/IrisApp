@@ -34,7 +34,9 @@ class _ProcessingScreenState extends State<ProcessingScreen> with SingleTickerPr
 
       final DateTime startTime = DateTime.now();
 
-      final res = await _diagnosisService.analyzeIris(widget.imagePath);
+      final String irisImagePath = await _diagnosisService.segmentIris(widget.imagePath);
+
+      final res = await _diagnosisService.analyzeIris(irisImagePath);
 
       final rawConfidence = (res['confidence'] ?? 0).toDouble();
       final int finalConfidence = (rawConfidence <= 1.0
@@ -133,7 +135,7 @@ class _ProcessingScreenState extends State<ProcessingScreen> with SingleTickerPr
             const SizedBox(height: 50),
             const CircularProgressIndicator(color: Color(0xFF4285F4)),
             const SizedBox(height: 20),
-            const Text("AI đang phân tích mống mắt...", style: TextStyle(fontSize: 16, color: Colors.grey)),
+            const Text("Đang trích xuất mống mắt và phân tích...", style: TextStyle(fontSize: 16, color: Colors.grey)),
           ],
         ),
       ),
