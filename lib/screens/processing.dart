@@ -1,12 +1,19 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/screens/results.dart';
+import '../models/eye_side.dart';
 import '../services/diagnosis_service.dart';
 import '../services/history_service.dart';
 
 class ProcessingScreen extends StatefulWidget {
   final String imagePath;
-  const ProcessingScreen({super.key, required this.imagePath});
+  final EyeSide eyeSide;
+
+  const ProcessingScreen({
+    super.key,
+    required this.imagePath,
+    required this.eyeSide,
+  });
 
   @override
   State<ProcessingScreen> createState() => _ProcessingScreenState();
@@ -34,21 +41,31 @@ class _ProcessingScreenState extends State<ProcessingScreen> with SingleTickerPr
 
       final DateTime startTime = DateTime.now();
 
-      final String irisImagePath = await _diagnosisService.segmentIris(widget.imagePath);
+      final segmentResult = await _diagnosisService.segmentIris(
+        widget.imagePath,
+        eyeSide: widget.eyeSide.value,
+      );
 
-      final res = await _diagnosisService.analyzeIris(irisImagePath);
+      final res = await _diagnosisService.analyzeIris(segmentResult.roiPath);
 
       final rawConfidence = (res['confidence'] ?? 0).toDouble();
-      final int finalConfidence = (rawConfidence <= 1.0
+      final double finalConfidence = (rawConfidence <= 1.0
           ? (rawConfidence * 100)
           : rawConfidence
       ).clamp(0, 100).round();
 
-      await _historyService.saveResult(
-        imagePath: widget.imagePath,
-        prediction: res['prediction'] ?? 'unknown',
-        confidence: finalConfidence,
-      );
+      final diagnosisId = await _historyService.createDiagnosisSession();
+      if (diagnosisId != null) {
+        await _historyService.saveRoiResult(
+          diagnosisId: diagnosisId,
+          eyeSide: widget.eyeSide.value,
+          roiName: 'Lungs',
+          fullIrisPath: segmentResult.irisPath,
+          bmpPath: segmentResult.roiPath,
+          prediction: res['prediction'] ?? 'unknown',
+          confidence: finalConfidence,
+        );
+      }
 
       final int elapsedExecutionTime = DateTime.now().difference(startTime).inMilliseconds;
       const int minimumUiDisplayTime = 2500;

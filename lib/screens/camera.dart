@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
+
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_application_1/screens/processing.dart';
 import 'package:image_picker/image_picker.dart';
+
+import '../models/eye_side.dart';
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -16,12 +18,12 @@ class CameraScreen extends StatefulWidget {
 
 enum _IrisConnectionPhase { connecting, connected, disconnected }
 
-class _CameraScreenState extends State<CameraScreen> {
+class _CameraScreenState extends State<CameraScreen>
+    with SingleTickerProviderStateMixin {
   _IrisConnectionPhase _connectionPhase = _IrisConnectionPhase.connecting;
   bool _isAutoCapturing = false;
   bool _isNavigatingToProcessing = false;
   bool _hasPreviewFrame = false;
-  String _captureHint = 'Đặt mắt vào thiết bị — hệ thống tự quét và chụp khi nhận diện mống mắt';
   final ValueNotifier<Uint8List?> _previewFrameNotifier = ValueNotifier<Uint8List?>(null);
   StreamSubscription<dynamic>? _previewSubscription;
   StreamSubscription<dynamic>? _autoCaptureSubscription;
@@ -29,6 +31,12 @@ class _CameraScreenState extends State<CameraScreen> {
   final ImagePicker _picker = ImagePicker();
   DateTime _lastUiFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
   static const _minUiFrameIntervalMs = 120;
+
+  EyeSide _selectedEyeSide = EyeSide.left;
+
+  String? _connectionError;
+
+  late AnimationController _fixationController;
 
   static const _iritechChannel = MethodChannel('com.iritech.irisaegis/device');
   static const _previewStream = EventChannel('com.iritech.irisaegis/preview');
@@ -38,11 +46,18 @@ class _CameraScreenState extends State<CameraScreen> {
   @override
   void initState() {
     super.initState();
+
+    _fixationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
     _connectToIriTechDevice();
   }
 
   @override
   void dispose() {
+    _fixationController.dispose();
     _previewSubscription?.cancel();
     _autoCaptureSubscription?.cancel();
     _hintSubscription?.cancel();
@@ -56,7 +71,7 @@ class _CameraScreenState extends State<CameraScreen> {
   void _listenIrisPreview() {
     _previewSubscription?.cancel();
     _previewSubscription = _previewStream.receiveBroadcastStream().listen(
-      (event) {
+          (event) {
         if (event is! Uint8List || !mounted) return;
 
         final now = DateTime.now();
@@ -84,21 +99,10 @@ class _CameraScreenState extends State<CameraScreen> {
     );
   }
 
-  void _listenCaptureHints() {
-    _hintSubscription?.cancel();
-    _hintSubscription = _hintStream.receiveBroadcastStream().listen(
-      (event) {
-        if (event is! String || event.isEmpty || !mounted || _isAutoCapturing) return;
-        setState(() => _captureHint = event);
-      },
-      onError: (error) => debugPrint('IriTech hint stream error: $error'),
-    );
-  }
-
   void _listenAutoCapture() {
     _autoCaptureSubscription?.cancel();
     _autoCaptureSubscription = _autoCaptureStream.receiveBroadcastStream().listen(
-      (event) {
+          (event) {
         if (event is! String || event.isEmpty || !mounted || _isNavigatingToProcessing) {
           return;
         }
@@ -121,7 +125,10 @@ class _CameraScreenState extends State<CameraScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProcessingScreen(imagePath: imagePath),
+        builder: (_) => ProcessingScreen(
+          imagePath: imagePath,
+          eyeSide: _selectedEyeSide,
+        ),
       ),
     );
 
@@ -131,21 +138,18 @@ class _CameraScreenState extends State<CameraScreen> {
       _isNavigatingToProcessing = false;
       _isAutoCapturing = false;
       _hasPreviewFrame = false;
-      _captureHint = 'Đặt mắt vào thiết bị — hệ thống tự quét và chụp khi nhận diện mống mắt';
     });
     _lastUiFrameAt = DateTime.fromMillisecondsSinceEpoch(0);
     _previewFrameNotifier.value = null;
 
     if (_connectionPhase == _IrisConnectionPhase.connected) {
       _listenAutoCapture();
-      _listenCaptureHints();
       _listenIrisPreview();
     }
   }
 
   void _resumeIrisStreams() {
     _listenAutoCapture();
-    _listenCaptureHints();
     _listenIrisPreview();
   }
 
@@ -162,9 +166,102 @@ class _CameraScreenState extends State<CameraScreen> {
     } catch (e) {
       debugPrint("IriTech Log: Chưa cắm máy quét ($e). Yêu cầu người dùng chọn ảnh thủ công.");
       if (!mounted) return;
-      setState(() => _connectionPhase = _IrisConnectionPhase.disconnected);
+      setState(() {
+        _connectionPhase = _IrisConnectionPhase.disconnected;
+        _connectionError = e.toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Kết nối thiết bị thất bại: $e'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
     }
   }
+
+  // ───────────────────────────────────────────────
+  //  Scan chỉ mắt trái hoặc mắt phải từ thiết bị
+  // ───────────────────────────────────────────────
+
+  /// Gọi native để scan CHỈ mắt trái qua IriTech SDK
+  Future<void> _scanLeftEyeOnly() async {
+    try {
+      debugPrint('[IriTech] Bắt đầu quét MẮT TRÁI...');
+      final String? result = await _iritechChannel.invokeMethod<String>(
+        'captureLeftEye',
+      );
+      debugPrint('[IriTech] captureLeftEye result: $result');
+
+      if (result != null && result.isNotEmpty && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProcessingScreen(
+              imagePath: result,
+              eyeSide: EyeSide.left,
+            ),
+          ),
+        );
+      }
+    } on PlatformException catch (e) {
+      debugPrint('[IriTech] captureLeftEye error: ${e.message}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi quét mắt trái: ${e.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Gọi native để scan CHỈ mắt phải qua IriTech SDK
+  Future<void> _scanRightEyeOnly() async {
+    try {
+      debugPrint('[IriTech] Bắt đầu quét MẮT PHẢI...');
+      final String? result = await _iritechChannel.invokeMethod<String>(
+        'captureRightEye',
+      );
+      debugPrint('[IriTech] captureRightEye result: $result');
+
+      if (result != null && result.isNotEmpty && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProcessingScreen(
+              imagePath: result,
+              eyeSide: EyeSide.right,
+            ),
+          ),
+        );
+      }
+    } on PlatformException catch (e) {
+      debugPrint('[IriTech] captureRightEye error: ${e.message}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Lỗi quét mắt phải: ${e.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Scan theo eye side đã chọn
+  Future<void> _scanSelectedEye() async {
+    if (_selectedEyeSide == EyeSide.left) {
+      await _scanLeftEyeOnly();
+    } else {
+      await _scanRightEyeOnly();
+    }
+  }
+
+  // ───────────────────────────────────────────────
+  //  Chọn ảnh từ thư viện
+  // ───────────────────────────────────────────────
 
   Future<void> _pickImageFromGallery() async {
     try {
@@ -178,7 +275,10 @@ class _CameraScreenState extends State<CameraScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ProcessingScreen(imagePath: pickedFile.path),
+            builder: (_) => ProcessingScreen(
+              imagePath: pickedFile.path,
+              eyeSide: _selectedEyeSide,
+            ),
           ),
         );
       }
@@ -191,6 +291,99 @@ class _CameraScreenState extends State<CameraScreen> {
       }
     }
   }
+
+  // ───────────────────────────────────────────────
+  //  Widget chọn Mắt trái / Mắt phải
+  // ───────────────────────────────────────────────
+
+  Widget _buildEyeSideSelector({bool darkMode = false}) {
+    final Color activeBg = const Color(0xFF4285F4);
+    final Color inactiveBg = darkMode
+        ? Colors.white.withValues(alpha: 0.12)
+        : const Color(0xFFE8EAED);
+    final Color activeText = Colors.white;
+    final Color inactiveText = darkMode ? Colors.white70 : Colors.black54;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: darkMode ? Colors.white.withValues(alpha: 0.08) : const Color(0xFFF1F3F4),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildEyeTab(
+            label: 'Mắt trái',
+            icon: Icons.visibility,
+            isActive: _selectedEyeSide == EyeSide.left,
+            activeBg: activeBg,
+            inactiveBg: inactiveBg,
+            activeText: activeText,
+            inactiveText: inactiveText,
+            onTap: () => setState(() => _selectedEyeSide = EyeSide.left),
+          ),
+          const SizedBox(width: 4),
+          _buildEyeTab(
+            label: 'Mắt phải',
+            icon: Icons.visibility,
+            isActive: _selectedEyeSide == EyeSide.right,
+            activeBg: activeBg,
+            inactiveBg: inactiveBg,
+            activeText: activeText,
+            inactiveText: inactiveText,
+            onTap: () => setState(() => _selectedEyeSide = EyeSide.right),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEyeTab({
+    required String label,
+    required IconData icon,
+    required bool isActive,
+    required Color activeBg,
+    required Color inactiveBg,
+    required Color activeText,
+    required Color inactiveText,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(
+          color: isActive ? activeBg : inactiveBg,
+          borderRadius: BorderRadius.circular(11),
+          boxShadow: isActive
+              ? [BoxShadow(color: activeBg.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 2))]
+              : [],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: isActive ? activeText : inactiveText),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isActive ? activeText : inactiveText,
+                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────────────────────────────
+  //  Build UI
+  // ───────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -246,12 +439,13 @@ class _CameraScreenState extends State<CameraScreen> {
                 begin: Alignment.topCenter,
                 end: Alignment.center,
                 colors: [
-                  Colors.black.withOpacity(0.55),
+                  Colors.black.withValues(alpha: 0.55),
                   Colors.transparent,
                 ],
               ),
             ),
           ),
+          // ── Status chip (top-right) ──
           SafeArea(
             child: Align(
               alignment: Alignment.topRight,
@@ -265,31 +459,29 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
             ),
           ),
+          // ── Close button (top-left) ──
           SafeArea(
             child: IconButton(
               icon: const Icon(Icons.close_rounded, color: Colors.white, size: 35),
               onPressed: () => Navigator.pop(context),
             ),
           ),
+          // ── Eye side selector (top-center) ──
           Positioned(
-            left: 16,
-            right: 16,
-            bottom: 130,
-            child: Text(
-              _isAutoCapturing
-                  ? 'Đã nhận diện mống mắt — đang chuyển sang phân tích...'
-                  : _hasPreviewFrame
-                      ? _captureHint
-                      : 'Góc nhìn trực tiếp từ IrisAegis — đang khởi động camera thiết bị...',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.92),
-                fontSize: 14,
-                height: 1.4,
-                shadows: const [Shadow(color: Colors.black, blurRadius: 8)],
+            left: 0,
+            right: 0,
+            bottom: 140,
+            child: Center(
+              child: _buildEyeSideSelector(
+                darkMode: true,
               ),
             ),
           ),
+
+
+          // ── Fixation dot — người dùng nhìn vào để căng mắt ──
+          _buildFixationDot(),
+          // ── Auto scan indicator ──
           Positioned(
             bottom: 50,
             left: 0,
@@ -334,14 +526,41 @@ class _CameraScreenState extends State<CameraScreen> {
         ),
         child: _isAutoCapturing
             ? const Padding(
-                padding: EdgeInsets.all(18),
-                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-              )
+          padding: EdgeInsets.all(18),
+          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+        )
             : Icon(
-                active ? Icons.visibility_rounded : Icons.remove_red_eye_outlined,
-                color: Colors.white,
-                size: 30,
-              ),
+          active ? Icons.visibility_rounded : Icons.remove_red_eye_outlined,
+          color: Colors.white,
+          size: 30,
+        ),
+      ),
+    );
+  }
+
+  // ───────────────────────────────────────────────
+  //  Fixation dot — điểm để người dùng nhìn vào
+  //  giúp căng mắt lộ toàn bộ mống mắt khi quét
+  // ───────────────────────────────────────────────
+
+  Widget _buildFixationDot() {
+    if (!_hasPreviewFrame || _isAutoCapturing) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: MediaQuery.of(context).size.height * 0.38,
+      child: const Center(
+        child: Text(
+          "Nhìn vào đây",
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
     );
   }
@@ -372,7 +591,7 @@ class _CameraScreenState extends State<CameraScreen> {
               width: 110,
               height: 110,
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.12),
+                color: Colors.orange.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.usb_off_rounded, size: 52, color: Colors.orange),
@@ -389,6 +608,50 @@ class _CameraScreenState extends State<CameraScreen> {
               style: TextStyle(fontSize: 15, color: Colors.black54, height: 1.5),
               textAlign: TextAlign.center,
             ),
+            const SizedBox(height: 28),
+            // ── Hiển thị lỗi kết nối (debug trên APK) ──
+            if (_connectionError != null)
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.error_outline, color: Colors.red, size: 18),
+                        SizedBox(width: 6),
+                        Text(
+                          'Lỗi kết nối:',
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _connectionError!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12, height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+            // ── Eye side selector ──
+            _buildEyeSideSelector(darkMode: false),
+            const SizedBox(height: 8),
+            Text(
+              'Đang chọn: ${_selectedEyeSide.label}',
+              style: const TextStyle(fontSize: 13, color: Colors.black45),
+            ),
             const Spacer(),
             SizedBox(
               width: double.infinity,
@@ -396,7 +659,7 @@ class _CameraScreenState extends State<CameraScreen> {
               child: ElevatedButton.icon(
                 onPressed: _pickImageFromGallery,
                 icon: const Icon(Icons.photo_library_outlined),
-                label: const Text('Chọn ảnh từ thư viện'),
+                label: Text('Chọn ảnh ${_selectedEyeSide.label} từ thư viện'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF4285F4),
                   foregroundColor: Colors.white,
@@ -443,8 +706,8 @@ class _CameraScreenState extends State<CameraScreen> {
         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
       ),
       backgroundColor: connected
-          ? (scanning ? Colors.lightGreen : (live ? Colors.green : Colors.green.withOpacity(0.8)))
-          : Colors.red.withOpacity(0.7),
+          ? (scanning ? Colors.lightGreen : (live ? Colors.green : Colors.green.withValues(alpha: 0.8)))
+          : Colors.red.withValues(alpha: 0.7),
     );
   }
 }

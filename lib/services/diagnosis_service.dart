@@ -1,76 +1,4 @@
-// import 'dart:convert';
-// import 'package:http/http.dart' as http;
-//
-// class DiagnosisService {
-//   Future<Map<String, dynamic>> analyzeIris(String imagePath) async {
-//     const String myPcIp = '192.168.1.41';
-//
-//     final urlsToTry = [
-//       'http://$myPcIp:8000/predict',
-//       'http://10.0.2.2:8000/predict',
-//       'http://127.0.0.1:8000/predict',
-//     ];
-//
-//     http.Response? response;
-//
-//     for (final url in urlsToTry) {
-//       try {
-//         final request = http.MultipartRequest(
-//           'POST',
-//           Uri.parse(url),
-//         );
-//
-//         request.files.add(
-//           await http.MultipartFile.fromPath(
-//             'file',
-//             imagePath,
-//           ),
-//         );
-//
-//         final streamed = await request
-//             .send()
-//             .timeout(const Duration(seconds: 5));
-//
-//         response = await http.Response.fromStream(streamed);
-//
-//         if (response.statusCode == 200) {
-//           break;
-//         }
-//       } catch (_) {
-//         continue;
-//       }
-//     }
-//
-//     if (response == null || response.statusCode != 200) {
-//       return {
-//         'prediction': 'unknown',
-//         'confidence': 0,
-//       };
-//     }
-//
-//     try {
-//       final data = json.decode(response.body);
-//
-//       print('API RESPONSE: $data');
-//
-//       return {
-//         'prediction':
-//         data['prediction']?.toString().trim().toLowerCase() ??
-//             'unknown',
-//
-//         'confidence': data['confidence'] ?? 0,
-//       };
-//     } catch (e) {
-//       print('Parse error: $e');
-//
-//       return {
-//         'prediction': 'unknown',
-//         'confidence': 0,
-//       };
-//     }
-//   }
-// }
-
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
@@ -85,52 +13,76 @@ class _IsolateParams {
   _IsolateParams(this.modelBytes, this.imagePath);
 }
 
+/// Kết quả tách mống mắt: ảnh toàn phần + dải ROI trải phẳng (.bmp)
+class SegmentResult {
+  final String irisPath;
+  final String roiPath;
+  SegmentResult({required this.irisPath, required this.roiPath});
+}
+
 class DiagnosisService {
   Uint8List? _modelBytes;
 
-  Future<String> segmentIris(String fullEyeImagePath) async {
-    try {
-      print("[Segmentation] Đang trích xuất mống mắt...");
+  /// eyeSide: 'left' hoặc 'right' — bắt buộc, quyết định vùng ROI cắt (Phổi trái/phải)
+  Future<SegmentResult> segmentIris(String fullEyeImagePath, {required String eyeSide}) async {
+    final Directory outputDir = await getApplicationDocumentsDirectory();
+    final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
 
-      final Directory downloadDir = await getDownloadsDirectory() ??
-          await getApplicationDocumentsDirectory();
+    final String irisOutputPath = '${outputDir.path}/iris_${eyeSide}_$timestamp.jpg';
+    final String roiOutputPath = '${outputDir.path}/roi_${eyeSide}_$timestamp.bmp';
 
-      final String baseName = fullEyeImagePath.split(Platform.pathSeparator).last;
-      final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-      final String segmentedName = "iris_${timestamp}_$baseName";
-      final String outputPath = '${downloadDir.path}/$segmentedName';
+    print("[Segmentation] Đang trích xuất mống mắt ($eyeSide)...");
 
-      final String? resultPath = await _runPythonSegmentation(
-          fullEyeImagePath,
-          outputPath
-      );
+    final SegmentResult? result = await _runPythonSegmentation(
+      inputPath: fullEyeImagePath,
+      irisOutputPath: irisOutputPath,
+      roiOutputPath: roiOutputPath,
+      eyeSide: eyeSide,
+    );
 
-      if (resultPath != null && await File(resultPath).exists()) {
-        print("[Segmentation] Thành công: $resultPath");
-        return resultPath;
-      }
-    } catch (e) {
-      print("[Segmentation] Lỗi: $e");
+    if (result != null &&
+        await File(result.irisPath).exists() &&
+        await File(result.roiPath).exists()) {
+      print("[Segmentation] Thành công: ${result.irisPath} | ${result.roiPath}");
+      return result;
     }
 
-    print("⚠️ [Segmentation] Sử dụng ảnh gốc làm fallback");
-    return fullEyeImagePath;
+    // Fallback: nếu segmentation lỗi, dùng lại ảnh gốc cho cả 2 (tránh crash app)
+    print("⚠️ [Segmentation] Lỗi xử lý, dùng ảnh gốc làm fallback");
+    return SegmentResult(irisPath: fullEyeImagePath, roiPath: fullEyeImagePath);
   }
 
-  Future<String?> _runPythonSegmentation(String inputPath, String outputPath) async {
+  Future<SegmentResult?> _runPythonSegmentation({
+    required String inputPath,
+    required String irisOutputPath,
+    required String roiOutputPath,
+    required String eyeSide,
+  }) async {
     try {
       const String pythonScriptPath = 'lib/assets/python/iris_segment.py';
 
       final process = await Process.run(
         'python',
-        [pythonScriptPath, inputPath, outputPath],
+        [pythonScriptPath, inputPath, irisOutputPath, roiOutputPath, eyeSide],
         runInShell: true,
       );
 
       if (process.exitCode == 0) {
-        final output = process.stdout.trim();
-        if (output.isNotEmpty) {
-          return output;
+        final String stdout = process.stdout.toString().trim();
+        if (stdout.isEmpty) {
+          print("Python Segmentation: stdout rỗng");
+          return null;
+        }
+
+        try {
+          final Map<String, dynamic> parsed = jsonDecode(stdout);
+          return SegmentResult(
+            irisPath: parsed['iris_path'] as String,
+            roiPath: parsed['roi_path'] as String,
+          );
+        } catch (e) {
+          print("Python Segmentation: parse JSON lỗi - $e | stdout: $stdout");
+          return null;
         }
       } else {
         print("Python Segmentation Error: ${process.stderr}");
@@ -194,7 +146,9 @@ class DiagnosisService {
       final List<double> logits = outputTensor[0];
 
       inputTensor.release();
-      for (var element in outputs) { element?.release(); }
+      for (var element in outputs) {
+        element?.release();
+      }
       session.release();
 
       double maxLogit = logits.reduce(math.max);
@@ -217,7 +171,6 @@ class DiagnosisService {
 
       int confidence = (maxProb * 100).toInt();
       return {'prediction': prediction, 'confidence': confidence};
-
     } catch (e) {
       print('Background Inference Error: $e');
       return {'prediction': 'unknown', 'confidence': 0};

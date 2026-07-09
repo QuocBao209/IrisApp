@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
 import sys
-import os
+import json
 from typing import Tuple
+
 
 class IrisSegmentationError(Exception):
     pass
@@ -23,7 +24,7 @@ class IrisSegmenter:
     def _detect_pupil(self, gray: np.ndarray) -> Tuple[int, int, int]:
         h, w = gray.shape
         margin = int(w * 0.12)
-        roi = gray[margin:h-margin, margin:w-margin]
+        roi = gray[margin:h - margin, margin:w - margin]
 
         blur = cv2.GaussianBlur(roi, (7, 7), 0)
         thr_val = max(1, int(np.percentile(blur, 8)))
@@ -108,7 +109,7 @@ class IrisSegmenter:
             blurred_top = cv2.GaussianBlur(top_roi, (7, 7), 0)
             edges_top = cv2.Canny(blurred_top, 20, 80)
 
-            lines_top = cv2.HoughLinesP(edges_top, 1, np.pi/180, threshold=20,
+            lines_top = cv2.HoughLinesP(edges_top, 1, np.pi / 180, threshold=20,
                                         minLineLength=int(iris_r * 0.3), maxLineGap=int(iris_r * 0.1))
 
             if lines_top is not None:
@@ -133,7 +134,7 @@ class IrisSegmenter:
             blurred_bot = cv2.GaussianBlur(bot_roi, (7, 7), 0)
             edges_bot = cv2.Canny(blurred_bot, 30, 100)
 
-            lines_bot = cv2.HoughLinesP(edges_bot, 1, np.pi/180, threshold=20,
+            lines_bot = cv2.HoughLinesP(edges_bot, 1, np.pi / 180, threshold=20,
                                         minLineLength=int(iris_r * 0.3), maxLineGap=int(iris_r * 0.1))
 
             if lines_bot is not None:
@@ -159,16 +160,44 @@ class IrisSegmenter:
 
         return cleaned_mask
 
-    def process(self, image_bgr: np.ndarray) -> np.ndarray:
+    def _unwrap_lung_roi(self, image_bgr: np.ndarray, pupil_center: Tuple[int, int], r_inner: int, r_outer: int, eye_side: str) -> np.ndarray:
+        if eye_side == 'right':
+            start_angle = 150
+            end_angle = 210
+        else:  # left
+            start_angle = -30
+            end_angle = 30
+
+        W, H = 256, 128
+
+        theta = np.linspace(np.radians(start_angle), np.radians(end_angle), W)
+        r = np.linspace(r_inner, r_outer, H)
+        theta_grid, r_grid = np.meshgrid(theta, r)
+
+        x_grid = pupil_center[0] + r_grid * np.cos(theta_grid)
+        y_grid = pupil_center[1] + r_grid * np.sin(theta_grid)
+
+        x_grid = x_grid.astype(np.float32)
+        y_grid = y_grid.astype(np.float32)
+
+        unwrapped_roi = cv2.remap(image_bgr, x_grid, y_grid, cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+        return unwrapped_roi
+
+    def process(self, image_bgr: np.ndarray, eye_side: str = 'right') -> Tuple[np.ndarray, np.ndarray]:
+        """Trả về (ảnh mống mắt toàn phần 400x400, dải ROI trải phẳng) - KHÔNG còn debug_img."""
         raw_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
         enhanced_gray = self._preprocess(image_bgr)
 
         px, py, pr = self._detect_pupil(enhanced_gray)
         iris_r = int(self._detect_iris_boundary(enhanced_gray, (px, py), pr) * 1.03)
 
+        r_inner_clean = int(pr * 1.10)
+
+        unwrapped_roi_img = self._unwrap_lung_roi(image_bgr, (px, py), r_inner_clean, iris_r, eye_side)
+
         mask = np.zeros(raw_gray.shape, dtype=np.uint8)
         cv2.circle(mask, (px, py), iris_r, 255, -1)
-
         mask = self._remove_eyelids_by_edge(raw_gray, mask, (px, py), iris_r)
 
         x0 = max(0, px - iris_r)
@@ -182,38 +211,67 @@ class IrisSegmenter:
         crop_img = cv2.resize(crop_img, (self.output_size, self.output_size), cv2.INTER_LINEAR)
         crop_mask = cv2.resize(crop_mask, (self.output_size, self.output_size), cv2.INTER_NEAREST)
 
-        iris_final = cv2.bitwise_and(crop_img, crop_img, mask=crop_mask)
-        return iris_final
+        iris_final_cropped = cv2.bitwise_and(crop_img, crop_img, mask=crop_mask)
+
+        return iris_final_cropped, unwrapped_roi_img
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("ERROR: Usage: python iris_segment.py <input_path> <output_path>")
+def main():
+    """
+    Gọi từ Flutter (Process.run):
+        python iris_segment.py <input_path> <output_iris_path> <output_roi_bmp_path> <eye_side>
+
+    - input_path: ảnh gốc chụp từ thiết bị IriTech
+    - output_iris_path: nơi lưu ảnh mống mắt toàn phần (400x400, .jpg/.png)
+    - output_roi_bmp_path: nơi lưu ảnh ROI trải phẳng (.bmp)
+    - eye_side: 'left' hoặc 'right'
+
+    In ra stdout DUY NHẤT 1 dòng JSON để Dart parse:
+        {"iris_path": "...", "roi_path": "..."}
+    Nếu lỗi: in lỗi ra stderr, exit code 1.
+    """
+    if len(sys.argv) != 5:
+        print("ERROR: Cần đúng 4 tham số: input_path output_iris_path output_roi_bmp_path eye_side",
+              file=sys.stderr)
         sys.exit(1)
 
     input_path = sys.argv[1]
-    output_path = sys.argv[2]
+    output_iris_path = sys.argv[2]
+    output_roi_bmp_path = sys.argv[3]
+    eye_side = sys.argv[4].strip().lower()
 
-    if not os.path.exists(input_path):
-        print(f"ERROR: Input file not found: {input_path}")
+    if eye_side not in ('left', 'right'):
+        print(f"ERROR: eye_side không hợp lệ: {eye_side}", file=sys.stderr)
         sys.exit(1)
 
     img = cv2.imread(input_path)
     if img is None:
-        print(f"ERROR: Cannot read image: {input_path}")
+        print(f"ERROR: Không đọc được ảnh: {input_path}", file=sys.stderr)
         sys.exit(1)
 
     try:
         segmenter = IrisSegmenter(output_size=400)
-        result = segmenter.process(img)
+        iris_cropped, roi_unwrapped = segmenter.process(img, eye_side=eye_side)
 
-        success = cv2.imwrite(output_path, result)
-        if success:
-            print(output_path)
-        else:
-            print("ERROR: Failed to save output image")
+        success_iris = cv2.imwrite(output_iris_path, iris_cropped)
+        success_roi = cv2.imwrite(output_roi_bmp_path, roi_unwrapped)
+
+        if not (success_iris and success_roi):
+            print("ERROR: Lưu file output thất bại", file=sys.stderr)
             sys.exit(1)
 
-    except Exception as e:
-        print(f"ERROR: {str(e)}")
+        print(json.dumps({
+            "iris_path": output_iris_path,
+            "roi_path": output_roi_bmp_path,
+        }))
+
+    except IrisSegmentationError as e:
+        print(f"ERROR: {str(e)}", file=sys.stderr)
         sys.exit(1)
+    except Exception as e:
+        print(f"ERROR: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

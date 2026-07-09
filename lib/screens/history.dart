@@ -112,11 +112,17 @@ class _HistoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String prediction =
-        data['prediction'] ?? 'unknown';
+    final String prediction = data['prediction'] ?? 'unknown';
 
-    final int confidence =
-    (data['confidence'] ?? 0).round();
+    final int confidence = (data['confidence'] ?? 0).round();
+
+    final String eyeSide = data['eyeSide'] ?? '';
+    final String roiName = data['roiName'] ?? '';
+    final String eyeLabel = eyeSide == 'left'
+        ? 'Mắt trái'
+        : eyeSide == 'right'
+        ? 'Mắt phải'
+        : '';
 
     String status;
     Color themeColor;
@@ -174,13 +180,10 @@ class _HistoryCard extends StatelessWidget {
               context,
               MaterialPageRoute(
                 builder: (_) => ResultScreen(
-                  imagePath:
-                  data['imagePath'] ?? '',
+                  imagePath: data['fullIrisPath'] ?? '',
                   result: {
-                    'prediction':
-                    data['prediction'],
-                    'confidence':
-                    data['confidence'],
+                    'prediction': data['prediction'],
+                    'confidence': data['confidence'],
                   },
                 ),
               ),

@@ -72,11 +72,9 @@ class HomeScreen extends StatelessWidget {
 
   Widget _buildHealthStatusCard(BuildContext context, Map<String, dynamic> data) {
     final Timestamp? timestamp = data['timestamp'] as Timestamp?;
-    final String prediction =
-        data['prediction'] ?? 'unknown';
+    final String prediction = data['prediction'] ?? 'unknown';
 
-    final int confidence =
-    (data['confidence'] ?? 0).round();
+    final int confidence = ((data['confidence'] ?? 0) as num).round();
 
     String status;
     bool isHealthy;
@@ -201,8 +199,11 @@ class HomeScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => ResultScreen(
-                          imagePath: data['imagePath'] ?? "",
-                          result: data,
+                          imagePath: data['fullIrisPath'] ?? "",
+                          result: {
+                            'prediction': data['prediction'],
+                            'confidence': data['confidence'],
+                          },
                         ),
                       ),
                     );
