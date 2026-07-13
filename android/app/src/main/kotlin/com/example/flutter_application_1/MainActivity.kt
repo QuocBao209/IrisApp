@@ -39,6 +39,18 @@ import java.io.File
 import java.util.ArrayList
 
 class MainActivity : FlutterActivity() {
+    companion object {
+        init {
+            // Ép load native ORT trước khi Dart FFI gọi DynamicLibrary.open
+            try {
+                System.loadLibrary("onnxruntime")
+                Log.i("ONNX", "System.loadLibrary(onnxruntime) OK")
+            } catch (t: Throwable) {
+                Log.e("ONNX", "System.loadLibrary(onnxruntime) FAILED", t)
+            }
+        }
+    }
+
     private val CHANNEL = "com.iritech.irisaegis/device"
     private val PREVIEW_CHANNEL = "com.iritech.irisaegis/preview"
     private val AUTO_CAPTURE_CHANNEL = "com.iritech.irisaegis/auto_capture"
@@ -47,6 +59,8 @@ class MainActivity : FlutterActivity() {
 
     private val previewFrameIntervalMs = 100L
     private val previewJpegQuality = 70
+    /** Ảnh kết quả từ máy — quality cao để giữ chi tiết mống mắt (trước 85 bị mờ). */
+    private val resultJpegQuality = 100
     private val previewDownscaleFactor = 2
     private val captureTimeMs = 3000
     private val sessionTimeoutMs = 20000
@@ -177,6 +191,34 @@ class MainActivity : FlutterActivity() {
                         startIrisPreviewStream()
                         result.success(null)
                     }
+                    "saveToDownloads" -> {
+                        val path = call.argument<String>("path")
+                        val fileName = call.argument<String>("fileName")
+                        if (path.isNullOrBlank()) {
+                            result.error("ARG", "Thiếu path", null)
+                            return@setMethodCallHandler
+                        }
+                        Thread {
+                            try {
+                                val file = File(path)
+                                if (!file.exists()) {
+                                    mainHandler.post {
+                                        result.error("NOT_FOUND", "File không tồn tại: $path", null)
+                                    }
+                                    return@Thread
+                                }
+                                val name = if (fileName.isNullOrBlank()) file.name else fileName
+                                copyToDownloadsIfPossible(file.readBytes(), name)
+                                mainHandler.post {
+                                    result.success("Đã lưu vào Downloads/$name")
+                                }
+                            } catch (e: Exception) {
+                                mainHandler.post {
+                                    result.error("SAVE_FAIL", e.message, null)
+                                }
+                            }
+                        }.start()
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -215,11 +257,14 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun buildCaptureOptionFlags(): Int {
+        // Không bật HINT_INDICATOR (2048) — tránh vẽ dấu X / guide lên frame preview
         var flags = CaptureFlagOption.AUTO_CAPTURE or CaptureFlagOption.AUTO_LEDS
         val info = deviceInfo
         if (info != null && info.scannerCapability.supportImageVerticalFlip()) {
             flags = flags or CaptureFlagOption.IMAGE_VERTICAL_FLIP
         }
+        // Đảm bảo tắt hint indicator nếu SDK mặc định bật
+        flags = flags and CaptureFlagOption.HINT_INDICATOR.inv()
         return flags
     }
 
@@ -364,7 +409,7 @@ class MainActivity : FlutterActivity() {
             ImageFormat(ImageFormat.MONO_JPEG),
             ImageKind(ImageKind.K7),
             ImageCompressionCriteria(ImageCompressionCriteria.QUALITY),
-            85,
+            resultJpegQuality,
             image,
         )
         if (imageRet.value != IICResult.OK) {

@@ -1,14 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'camera.dart';
 
 class ResultScreen extends StatelessWidget {
   final String imagePath;
+  final String? roiPath;
+  final String? irisPath;
   final Map<String, dynamic> result;
 
   const ResultScreen({
     super.key,
     required this.imagePath,
+    this.roiPath,
+    this.irisPath,
     required this.result,
   });
 
@@ -155,6 +161,27 @@ class ResultScreen extends StatelessWidget {
                     ),
                   ),
 
+                  if ((result['error'] ?? '').toString().isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Chi tiết lỗi: ${result['error']}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+
+                  if (result['probs'] != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'probs: ${result['probs']}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 11, color: Colors.black45),
+                    ),
+                  ],
+
                   const SizedBox(height: 12),
 
                   Text(
@@ -174,6 +201,11 @@ class ResultScreen extends StatelessWidget {
               confidence,
               themeColor,
             ),
+
+            if (_hasImage(roiPath) || _hasImage(irisPath)) ...[
+              const SizedBox(height: 24),
+              _buildImageSection(),
+            ],
 
             const SizedBox(height: 24),
 
@@ -201,7 +233,7 @@ class ResultScreen extends StatelessWidget {
                   SizedBox(height: 12),
 
                   Text(
-                    'Kết quả được tạo bởi mô hình AI phân tích ảnh mống mắt và chỉ mang tính chất tham khảo. Để có kết luận chính xác, hãy tham khảo ý kiến bác sĩ chuyên khoa.',
+                    'AI chỉ mang tính tham khảo. Ảnh ROI cũng được lưu trong thư mục Downloads (tên bắt đầu IrisApp_roi_...).',
                     style: TextStyle(
                       fontSize: 14,
                       height: 1.5,
@@ -252,6 +284,57 @@ class ResultScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  bool _hasImage(String? path) =>
+      path != null && path.isNotEmpty && File(path).existsSync();
+
+  Widget _buildImageSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Ảnh đã cắt',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          if (_hasImage(roiPath)) ...[
+            const Text('ROI phổi (đưa vào AI)', style: TextStyle(fontSize: 13, color: Colors.black54)),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(
+                File(roiPath!),
+                width: double.infinity,
+                height: 120,
+                fit: BoxFit.contain,
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_hasImage(irisPath)) ...[
+            const Text('Mống mắt toàn phần', style: TextStyle(fontSize: 13, color: Colors.black54)),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.file(
+                File(irisPath!),
+                width: double.infinity,
+                height: 180,
+                fit: BoxFit.contain,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

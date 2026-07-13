@@ -1,7 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.github.com/import/id/tools"
-    xmlns:tools_1="http://schemas.android.com/tools"
-    tools:ignore="MissingLeaveBlankSpace">
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -20,7 +18,9 @@
         android:label="flutter_application_1"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        tools_1:replace="android:label"> <activity
+        android:extractNativeLibs="true"
+        tools:replace="android:label,android:extractNativeLibs">
+        <activity
         android:name=".MainActivity"
         android:exported="true"
         android:launchMode="singleTop"

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_application_1/screens/results.dart';
 import '../models/eye_side.dart';
 import '../services/diagnosis_service.dart';
@@ -36,69 +37,105 @@ class _ProcessingScreenState extends State<ProcessingScreen> with SingleTickerPr
   }
 
   void _performAnalysis() async {
+    Map<String, dynamic> res = const {'prediction': 'unknown', 'confidence': 0};
+    SegmentResult? segmentResult;
+
     try {
       await Future.delayed(const Duration(milliseconds: 200));
-
       final DateTime startTime = DateTime.now();
 
-      final segmentResult = await _diagnosisService.segmentIris(
+      segmentResult = await _diagnosisService.segmentIris(
         widget.imagePath,
         eyeSide: widget.eyeSide.value,
       );
+      debugPrint('[Processing] seg iris=${segmentResult.irisPath}');
+      debugPrint('[Processing] seg roi=${segmentResult.roiPath}');
 
-      final res = await _diagnosisService.analyzeIris(segmentResult.roiPath);
+      res = await _diagnosisService.analyzeIris(segmentResult.roiPath);
+      debugPrint('[Processing] analyze => $res');
 
-      final rawConfidence = (res['confidence'] ?? 0).toDouble();
-      final double finalConfidence = (rawConfidence <= 1.0
-          ? (rawConfidence * 100)
-          : rawConfidence
-      ).clamp(0, 100).round();
+      // Không để lỗi Firebase/Downloads nuốt mất kết quả AI
+      try {
+        final rawConfidence = (res['confidence'] ?? 0).toDouble();
+        final double finalConfidence = (rawConfidence <= 1.0
+                ? (rawConfidence * 100)
+                : rawConfidence)
+            .clamp(0, 100)
+            .toDouble();
 
-      final diagnosisId = await _historyService.createDiagnosisSession();
-      if (diagnosisId != null) {
-        await _historyService.saveRoiResult(
-          diagnosisId: diagnosisId,
-          eyeSide: widget.eyeSide.value,
-          roiName: 'Lungs',
-          fullIrisPath: segmentResult.irisPath,
-          bmpPath: segmentResult.roiPath,
-          prediction: res['prediction'] ?? 'unknown',
-          confidence: finalConfidence,
-        );
+        final diagnosisId = await _historyService.createDiagnosisSession();
+        if (diagnosisId != null) {
+          await _historyService.saveRoiResult(
+            diagnosisId: diagnosisId,
+            eyeSide: widget.eyeSide.value,
+            roiName: 'Lungs',
+            fullIrisPath: segmentResult.irisPath,
+            bmpPath: segmentResult.roiPath,
+            prediction: res['prediction'] ?? 'unknown',
+            confidence: finalConfidence,
+          );
+        }
+      } catch (e) {
+        debugPrint('[Processing] Lưu Firebase lỗi (bỏ qua): $e');
       }
 
-      final int elapsedExecutionTime = DateTime.now().difference(startTime).inMilliseconds;
+      try {
+        final stamp = DateTime.now().millisecondsSinceEpoch;
+        await _saveToDownloads(
+          segmentResult.roiPath,
+          'IrisApp_roi_${widget.eyeSide.value}_$stamp.jpg',
+        );
+        await _saveToDownloads(
+          segmentResult.irisPath,
+          'IrisApp_iris_${widget.eyeSide.value}_$stamp.jpg',
+        );
+      } catch (e) {
+        debugPrint('[Processing] Lưu Downloads lỗi (bỏ qua): $e');
+      }
+
+      final int elapsedExecutionTime =
+          DateTime.now().difference(startTime).inMilliseconds;
       const int minimumUiDisplayTime = 2500;
-
       if (elapsedExecutionTime < minimumUiDisplayTime) {
-        final int dynamicRemainingDelay = minimumUiDisplayTime - elapsedExecutionTime;
-        await Future.delayed(Duration(milliseconds: dynamicRemainingDelay));
+        await Future.delayed(
+          Duration(milliseconds: minimumUiDisplayTime - elapsedExecutionTime),
+        );
       }
+    } catch (e, st) {
+      debugPrint('UI Processing Error: $e\n$st');
+      res = {
+        'prediction': 'unknown',
+        'confidence': 0,
+        'error': e.toString(),
+      };
+    }
 
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ResultScreen(
-              imagePath: widget.imagePath,
-              result: res,
-            ),
-          ),
-        );
-      }
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ResultScreen(
+          imagePath: widget.imagePath,
+          roiPath: segmentResult?.roiPath,
+          irisPath: segmentResult?.irisPath,
+          result: res,
+        ),
+      ),
+    );
+  }
+
+  static const _deviceChannel = MethodChannel('com.iritech.irisaegis/device');
+
+  Future<void> _saveToDownloads(String path, String fileName) async {
+    try {
+      if (!await File(path).exists()) return;
+      final msg = await _deviceChannel.invokeMethod<String>('saveToDownloads', {
+        'path': path,
+        'fileName': fileName,
+      });
+      debugPrint('[Downloads] $msg');
     } catch (e) {
-      print('UI Processing Error: $e');
-      if (mounted) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ResultScreen(
-              imagePath: widget.imagePath,
-              result: const {'prediction': 'unknown', 'confidence': 0},
-            ),
-          ),
-        );
-      }
+      debugPrint('[Downloads] Lỗi lưu $fileName: $e');
     }
   }
 

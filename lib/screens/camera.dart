@@ -414,11 +414,15 @@ class _CameraScreenState extends State<CameraScreen>
                       const SizedBox(height: 16),
                       Text(
                         Platform.isAndroid
-                            ? 'Đang chờ hình ảnh từ IrisAegis...\nĐặt mắt vào thiết bị quét'
+                            ? 'Đang chờ hình ảnh từ IrisAegis...'
                             : 'Preview Iris chỉ hỗ trợ Android',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: Colors.white70, height: 1.5),
                       ),
+                      if (Platform.isAndroid) ...[
+                        const SizedBox(height: 18),
+                        _buildEyeSideSelector(darkMode: true),
+                      ],
                     ],
                   ),
                 );
@@ -459,28 +463,32 @@ class _CameraScreenState extends State<CameraScreen>
               ),
             ),
           ),
-          // ── Close button (top-left) ──
+          // ── Close button (top-left) — dùng chevron để tránh nhầm với dấu X giữa màn ──
           SafeArea(
             child: IconButton(
-              icon: const Icon(Icons.close_rounded, color: Colors.white, size: 35),
+              icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 28),
               onPressed: () => Navigator.pop(context),
             ),
           ),
-          // ── Eye side selector (top-center) ──
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 140,
-            child: Center(
-              child: _buildEyeSideSelector(
-                darkMode: true,
+          // ── Eye side selector (bottom) ──
+          if (_hasPreviewFrame && !_isAutoCapturing)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 150,
+              child: Center(
+                child: _buildEyeSideSelector(
+                  darkMode: true,
+                ),
               ),
             ),
-          ),
-
-
-          // ── Fixation dot — người dùng nhìn vào để căng mắt ──
-          _buildFixationDot(),
+          // ── Khối vàng focus góc phải dưới ──
+          if (_hasPreviewFrame && !_isAutoCapturing)
+            Positioned(
+              right: 20,
+              bottom: 48,
+              child: _buildFocusTarget(),
+            ),
           // ── Auto scan indicator ──
           Positioned(
             bottom: 50,
@@ -538,30 +546,32 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  // ───────────────────────────────────────────────
-  //  Fixation dot — điểm để người dùng nhìn vào
-  //  giúp căng mắt lộ toàn bộ mống mắt khi quét
-  // ───────────────────────────────────────────────
-
-  Widget _buildFixationDot() {
-    if (!_hasPreviewFrame || _isAutoCapturing) {
-      return const SizedBox.shrink();
-    }
-
-    return Positioned(
-      left: 0,
-      right: 0,
-      top: MediaQuery.of(context).size.height * 0.38,
-      child: const Center(
-        child: Text(
-          "Nhìn vào đây",
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
+  /// Khối sáng góc phải — điểm nhìn để căng mắt khi quét
+  Widget _buildFocusTarget() {
+    return AnimatedBuilder(
+      animation: _fixationController,
+      builder: (context, _) {
+        final pulse = 0.75 + (_fixationController.value * 0.25);
+        return Transform.scale(
+          scale: pulse,
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFD54F),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white, width: 2.5),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFFFD54F).withValues(alpha: 0.65),
+                  blurRadius: 18,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
