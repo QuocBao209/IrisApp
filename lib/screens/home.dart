@@ -71,15 +71,42 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildHealthStatusCard(BuildContext context, Map<String, dynamic> data) {
-    final int score = data['score'] ?? 0;
-    final String status = data['status'] ?? "Chẩn đoán mống mắt";
     final Timestamp? timestamp = data['timestamp'] as Timestamp?;
+    final String prediction = data['prediction'] ?? 'unknown';
 
-    final bool isHealthy = score >= 80;
-    final Color themeColor = isHealthy ? Colors.green : Colors.redAccent;
-    final List<Color> gradientColors = isHealthy
-        ? [const Color(0xFF4285F4), const Color(0xFF5E9EFF)]
-        : [const Color(0xFFFF5252), const Color(0xFFFF8A80)];
+    final int confidence = ((data['confidence'] ?? 0) as num).round();
+
+    String status;
+    bool isHealthy;
+    List<Color> gradientColors;
+
+    switch (prediction) {
+      case 'negative':
+        status = 'Khỏe mạnh';
+        isHealthy = true;
+        gradientColors = [
+          const Color(0xFF4CAF50),
+          const Color(0xFF81C784),
+        ];
+        break;
+
+      case 'positive':
+        status = 'Có dấu hiệu bệnh';
+        isHealthy = false;
+        gradientColors = [
+          const Color(0xFFFF5252),
+          const Color(0xFFFF8A80),
+        ];
+        break;
+
+      default:
+        status = 'Không xác định';
+        isHealthy = false;
+        gradientColors = [
+          const Color(0xFFFFA726),
+          const Color(0xFFFFCC80),
+        ];
+    }
 
     String timeAgo = "Vừa xong";
     if (timestamp != null) {
@@ -120,14 +147,14 @@ class HomeScreen extends StatelessWidget {
                 width: 80,
                 height: 80,
                 child: CircularProgressIndicator(
-                  value: score / 100,
+                  value: confidence / 100,
                   strokeWidth: 8,
                   backgroundColor: Colors.white.withOpacity(0.2),
                   valueColor: const AlwaysStoppedAnimation(Colors.white),
                 ),
               ),
               Text(
-                "$score%",
+                "$confidence%",
                 style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
               ),
             ],
@@ -145,8 +172,16 @@ class HomeScreen extends StatelessWidget {
                     borderRadius: BorderRadius.circular(30),
                   ),
                   child: Text(
-                    isHealthy ? "Sức khỏe ổn định" : "Cần lưu ý",
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12),
+                    prediction == 'negative'
+                        ? 'Sức khỏe ổn định'
+                        : prediction == 'positive'
+                        ? 'Cần lưu ý'
+                        : 'Không xác định',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -164,8 +199,11 @@ class HomeScreen extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (context) => ResultScreen(
-                          imagePath: data['imagePath'] ?? "",
-                          result: data,
+                          imagePath: data['fullIrisPath'] ?? "",
+                          result: {
+                            'prediction': data['prediction'],
+                            'confidence': data['confidence'],
+                          },
                         ),
                       ),
                     );
